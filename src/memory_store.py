@@ -97,26 +97,54 @@ def extract_profile_updates(message: str) -> dict[str, str]:
 
     # Simple regex‑based extraction of a few common facts.
     facts: dict[str, str] = {}
-    # Name pattern e.g., "My name is Alice" or "I'm Alice"
-    name_match = re.search(r"(?:name is|I\'m)\s+([A-Za-z]+)", message, re.IGNORECASE)
+
+    # Skip pure question turns
+    msg_lower = message.lower()
+    if "?" in message and not any(kw in msg_lower for kw in ["tên là", "name is", "i'm", "ở ", "live in", "thích", "favorite"]):
+        return facts
+
+    # Name pattern e.g., "My name is Alice", "I'm Alice", "tên là DũngCT", "mình tên DũngCT"
+    name_match = re.search(r"(?:name is|I\'m|tên là|mình tên|tên mình là)\s+([A-Za-z0-9_\-À-ỹ]+)", message, re.IGNORECASE)
     if name_match:
-        facts["name"] = name_match.group(1)
-    # Location pattern e.g., "I live in Paris"
-    loc_match = re.search(r"live in\s+([A-Za-z\s]+)", message, re.IGNORECASE)
+        facts["name"] = name_match.group(1).strip()
+
+    # Location pattern e.g., "I live in Paris", "ở Đà Nẵng", "sống tại Hà Nội"
+    loc_match = re.search(r"(?:live in|ở|sống tại|sống ở)\s+([A-Za-z0-9_\-\sÀ-ỹ]+?)(?=[.,;\n]|$)", message, re.IGNORECASE)
     if loc_match:
-        facts["location"] = loc_match.group(1).strip()
-    # Profession pattern e.g., "I am a doctor"
-    prof_match = re.search(r"am a\s+([A-Za-z]+)", message, re.IGNORECASE)
+        loc_val = loc_match.group(1).strip()
+        if len(loc_val) < 40 and not any(kw in loc_val.lower() for kw in ["là", "gì", "ngắn"]):
+            facts["location"] = loc_val
+
+    # Profession pattern e.g., "I am a doctor", "làm backend engineer"
+    prof_match = re.search(r"(?:am a|làm)\s+([A-Za-z0-9_\-\sÀ-ỹ]+?)(?=[.,;\n]|$)", message, re.IGNORECASE)
     if prof_match:
-        facts["profession"] = prof_match.group(1)
-    # Preference / style pattern
-    pref_match = re.search(r"prefer[s]?\s+([A-Za-z\s]+)", message, re.IGNORECASE)
-    if pref_match:
-        facts["preferences"] = pref_match.group(1).strip()
-    # Favorite food / drink pattern
-    food_match = re.search(r"favorite (?:food|drink) is\s+([A-Za-z\s]+)", message, re.IGNORECASE)
+        prof_val = prof_match.group(1).strip()
+        if len(prof_val) < 50 and not any(kw in prof_val.lower() for kw in ["gì", "như"]):
+            facts["profession"] = prof_val
+
+    # Preference / style pattern e.g. "ngắn gọn", "3 bullet", "style"
+    if any(p in msg_lower for p in ["ngắn gọn", "3 bullet", "bullet", "ví dụ thực tế"]):
+        pref_parts = []
+        if "ngắn gọn" in msg_lower:
+            pref_parts.append("ngắn gọn")
+        if "bullet" in msg_lower or "3 bullet" in msg_lower:
+            pref_parts.append("3 bullet")
+        if "ví dụ thực tế" in msg_lower:
+            pref_parts.append("có ví dụ thực tế")
+        if pref_parts:
+            facts["preferences"] = ", ".join(pref_parts)
+    else:
+        pref_match = re.search(r"prefer[s]?\s+([A-Za-z0-9_\-\sÀ-ỹ]+?)(?=[.,;\n]|$)", message, re.IGNORECASE)
+        if pref_match:
+            facts["preferences"] = pref_match.group(1).strip()
+
+    # Favorite food / drink pattern e.g. "cà phê sữa đá", "favorite drink is coffee"
+    food_match = re.search(r"(?:favorite (?:food|drink)|đồ uống yêu thích|thích)\s+(?:is|là)?\s*([A-Za-z0-9_\-\sÀ-ỹ]+?)(?=[.,;\n]|$)", message, re.IGNORECASE)
     if food_match:
-        facts["favorite"] = food_match.group(1).strip()
+        fav_val = food_match.group(1).strip()
+        if len(fav_val) < 40 and not any(kw in fav_val.lower() for kw in ["trả lời", "gì", "giao"]):
+            facts["favorite"] = fav_val
+
     return facts
 
 

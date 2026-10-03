@@ -149,41 +149,55 @@ class AdvancedAgent:
         summary = ctx.get("summary", "")
         recent_msgs = " ".join(m.get("content", "") for m in ctx.get("messages", []))
 
+        # Parse profile facts into dictionary
+        profile_facts: dict[str, str] = {}
+        for line in profile_text.splitlines():
+            if line.strip().startswith("- "):
+                parts = line.strip()[2:].split(":", 1)
+                if len(parts) == 2:
+                    profile_facts[parts[0].strip().lower()] = parts[1].strip()
+
         is_question = any(q in msg_lower for q in ["?", "gì", "nào", "đâu", "who", "what", "where", "nhắc lại", "là ai"])
 
         if is_question:
-            # Check profile first for persistent long-term facts across sessions
+            recalled_parts = []
+
+            # Check for name
             if any(kw in msg_lower for kw in ["tên", "name", "who am i"]):
-                for line in profile_text.splitlines():
-                    if "name:" in line.lower():
-                        val = line.split(":", 1)[1].strip()
-                        return f"Tên của bạn là {val}."
-                if "name" in summary.lower() or "name" in recent_msgs.lower():
-                    return f"Theo trí nhớ: {summary} {recent_msgs}"
-                return "Tôi chưa ghi nhận tên của bạn."
+                val = profile_facts.get("name")
+                if val:
+                    recalled_parts.append(f"Tên: {val}")
 
+            # Check for favorite drink / food
+            if any(kw in msg_lower for kw in ["thích", "favorite", "đồ uống"]):
+                val = profile_facts.get("favorite")
+                if val:
+                    recalled_parts.append(f"Đồ uống/thức ăn yêu thích: {val}")
+
+            # Check for preferences / style
+            if any(kw in msg_lower for kw in ["style", "kiểu", "cách", "trả lời", "preferences"]):
+                val = profile_facts.get("preferences")
+                if val:
+                    recalled_parts.append(f"Style trả lời: {val}")
+
+            # Check for profession / job
             if any(kw in msg_lower for kw in ["nghề", "job", "profession", "làm gì"]):
-                for line in profile_text.splitlines():
-                    if "profession:" in line.lower() or "job:" in line.lower():
-                        val = line.split(":", 1)[1].strip()
-                        return f"Nghề nghiệp của bạn là {val}."
-                return "Tôi chưa ghi nhận nghề nghiệp của bạn."
+                val = profile_facts.get("profession")
+                if val:
+                    recalled_parts.append(f"Nghề nghiệp: {val}")
 
-            if any(kw in msg_lower for kw in ["thích", "prefer", "favorite", "style"]):
-                found = []
-                for line in profile_text.splitlines():
-                    if any(k in line.lower() for k in ["preferences:", "favorite:"]):
-                        found.append(line.strip())
-                if found:
-                    return f"Sở thích / style của bạn: {'; '.join(found)}"
-                return "Tôi chưa ghi nhận sở thích của bạn."
-
+            # Check for location
             if any(kw in msg_lower for kw in ["sống", "ở đâu", "live", "location"]):
-                for line in profile_text.splitlines():
-                    if "location:" in line.lower():
-                        val = line.split(":", 1)[1].strip()
-                        return f"Bạn sống tại {val}."
-                return "Tôi chưa ghi nhận nơi ở của bạn."
+                val = profile_facts.get("location")
+                if val:
+                    recalled_parts.append(f"Nơi ở: {val}")
+
+            if recalled_parts:
+                return "Thông tin ghi nhớ: " + " | ".join(recalled_parts)
+            elif summary or recent_msgs:
+                return f"Theo lịch sử hội thoại: {summary} {recent_msgs}"
+            else:
+                return "Tôi chưa ghi nhận thông tin này."
 
         return f"AdvancedAgent đã nhận: {message}"
 
