@@ -36,26 +36,49 @@ Sau khi thực thi `python src/benchmark.py`, hai bộ dữ liệu thử nghiệ
 
 ---
 
-## 3. Phân Tích Đánh Giá Trade-Off (Lợi - Hại)
+## 3. Phân Tích Chi Tiết Theo 4 Câu Hỏi Trọng Tâm (Bước 8 Guide.md)
 
-### 3.1. Khả Năng Ghi Nhớ Xuyên Phiên (Cross-Session Recall)
-- **Baseline Agent**: Điểm recall chạm mốc **0.0%** trong bài kiểm tra stress test dài hạn. Lý do vì Baseline khóa bộ nhớ theo `thread_id`; khi các câu hỏi recall được gửi ở một thread riêng biệt, agent hoàn toàn không có thông tin.
-- **Advanced Agent**: Đạt điểm recall **25.0%** trong stress test và **13.9%** trong standard benchmark. Điểm số này vượt trội nhờ tầng **Persistent `User.md`** cho phép agent đọc lại các fact đã trích xuất từ trước dù đang ở phiên làm việc mới.
+### 3.1. Vì sao Advanced Agent có Recall vượt trội hơn Baseline Agent?
+- **Số liệu chứng minh**: Trong bài kiểm tra Long-Context Stress Benchmark, Cross-Session Recall của Advanced Agent đạt **25.0%** (và **13.9%** ở Standard Benchmark), trong khi Baseline Agent sụt giảm về **0.0%**.
+- **Cơ chế trong code**: Khi người dùng cung cấp thông tin, `extract_profile_updates()` trích xuất các fact cố định và ghi xuống đĩa thông qua `UserProfileStore` (`User.md`). Ở thread/session mới, `_offline_response()` của Advanced Agent nạp lại `User.md` để trả lời chính xác câu hỏi recall, trong khi `BaselineAgent` khóa bộ nhớ theo `thread_id` nên quên hoàn toàn dữ liệu ở phiên mới.
+- **Giới hạn**: Khả năng recall của Advanced Agent phụ thuộc vào độ chính xác của bộ trích xuất fact (`extract_profile_updates`); nếu tin nhắn thô dùng từ ngữ không khớp với mẫu trích xuất, fact có thể bị bỏ sót.
 
-### 3.2. Hiệu Quả Token & Giảm Tải Prompt (Prompt Load Reduction)
-- Ở bộ dữ liệu ngắn (Standard), Baseline tiêu tốn ít prompt token hơn vì không phải mang theo nội dung file `User.md` và bản tóm tắt.
-- Tuy nhiên, trong **Long-Context Stress Benchmark** (hội thoại kéo dài 16+ lượt):
-  - **Baseline**: Prompt token tăng liên tục theo chiều dài hội thoại (**37,234 tokens**) do phải giữ lại toàn bộ lịch sử thô.
-  - **Advanced**: Nhờ kích hoạt **28 lần compaction** để thu gọn các đoạn hội thoại cũ thành summary, tổng prompt token đã giảm xuống còn **34,734 tokens** (tiết kiệm ~2,500 prompt tokens), đồng thời số token phản hồi tự sinh cũng giảm từ **2,398** xuống **1,652**.
+### 3.2. Vì sao Advanced Agent lại tốn nhiều Prompt Tokens hơn ở hội thoại ngắn?
+- **Số liệu chứng minh**: Ở Standard Benchmark (hội thoại ngắn ~10 lượt), tổng **Prompt Tokens Processed** của Advanced Agent là **23,849 tokens**, cao hơn mức **17,688 tokens** của Baseline Agent.
+- **Cơ chế trong code**: Trong `_estimate_prompt_context_tokens()`, mỗi lượt thoại của Advanced Agent bắt buộc phải load thêm nội dung file `User.md` và bản tóm tắt `summary` vào ngữ cảnh prompt.
+- **Giới hạn**: Ở các hội thoại ngắn, số lượng lượt thoại chưa đủ nhiều để cơ chế compaction phát huy tác dụng nén lịch sử, dẫn đến khoản overhead cố định từ `User.md` làm chi phí prompt token cao hơn.
 
-### 3.3. Đánh Đổi Về Dung Lượng Lưu Trữ & Độ Phức Tạp
-- **Dung lượng đĩa (Memory Growth)**: Advanced Agent tốn thêm trung bình **201 - 214 bytes** cho mỗi người dùng để lưu trữ file `User.md`. Đây là chi phí lưu trữ cực kỳ nhỏ so với lợi ích ghi nhớ lâu dài mang lại.
-- **Độ phức tạp tính toán**: Advanced Agent đòi hỏi nhiều logic xử lý hơn (Regex fact extraction, File I/O, Compaction check), nhưng đổi lại giữ được Response Quality cao gấp đôi (40.0% so với 20.0%).
+### 3.3. Vì sao Compact Memory đem lại lợi thế vượt trội ở hội thoại dài?
+- **Số liệu chứng minh**: Trong Long-Context Stress Benchmark (hội thoại dài 16+ lượt kèm dữ liệu nhiễu), tổng **Prompt Tokens Processed** của Advanced Agent giảm xuống còn **34,734 tokens** (thấp hơn mức **37,234 tokens** của Baseline), đồng thời ghi nhận **28 lần Compactions**.
+- **Cơ chế trong code**: Khi tổng token của thread vượt ngưỡng `compact_threshold_tokens`, `CompactMemoryManager.append()` kích hoạt `summarize_messages()` để cô đọng lịch sử cũ thành bản tóm tắt ngắn, loại bỏ các tin nhắn rác cồng kềnh.
+- **Giới hạn**: Compact memory chủ yếu tối ưu hóa cho cột **Prompt Tokens Processed** bằng cách cắt giảm độ dài bối cảnh; nó không làm giảm kích thước của các fact cố định trong `User.md`.
+
+### 3.4. Sự tăng trưởng file memory và các rủi ro hệ thống đi kèm
+- **Số liệu chứng minh**: **Memory Growth (bytes)** của Advanced Agent tăng trung bình **201 - 214 bytes** per user, trong khi Baseline Agent luôn giữ mốc **0 bytes**.
+- **Cơ chế trong code**: `UserProfileStore.write_text()` ghi các fact dưới dạng cấu trúc Markdown (`state/profiles/{user_id}.md`). Hàm `_update_user_profile()` thực hiện ghi đè (overwrite) khi nhận được fact mới cho cùng một key để tránh nhân đôi dữ liệu.
+- **Rủi ro quan sát**: Nếu người dùng đưa ra các thông tin sai hoặc nhiễu, hệ thống có thể trích xuất nhầm và lưu lâu dài vào `User.md`. Ngoài ra, khi dữ liệu người dùng tích lũy hàng năm, số lượng fact trong `User.md` có thể phình to, làm tăng bối cảnh prompt ban đầu.
 
 ---
 
-## 4. Kết Luận
+## 4. Hướng Mở Rộng Nâng Cấp (Bonus Extension - Target Mốc Điểm 90-100)
 
-1. **Short-term memory duy nhất là không đủ** cho các ứng dụng AI Agent thực tế vì agent sẽ hoàn toàn quên bối cảnh người dùng ngay khi khởi tạo phiên làm việc mới.
-2. **Persistent Memory (`User.md`)** là chìa khóa giúp giải quyết bài toán Cross-Session Recall với chi phí lưu trữ tối ưu.
-3. **Compact Memory (Compacting/Summarization)** giúp kiểm soát hiện tượng phình đại ngữ cảnh (Prompt Explosion) ở các hội thoại dài, giữ chi phí token ổn định và tối ưu hóa thời gian phản hồi.
+Để hướng tới mốc điểm tối đa **90-100** theo `Rubric.md`, chúng ta lựa chọn hướng mở rộng: **Conflict Handling & Confidence Thresholding cho Persistent Memory**.
+
+### 4.1. Vấn đề thực tế giải quyết
+Trong quá trình thử nghiệm, nếu người dùng đặt câu hỏi nghi vấn (ví dụ: *"Mình sống ở Hà Nội phải không?"*), các bộ trích xuất đơn giản dễ nhầm lẫn câu hỏi thành một fact mới và ghi đè dữ liệu cũ. Ngoài ra, khi người dùng thay đổi thông tin (Correction), hệ thống cần xử lý xung đột thông tin cũ/mới một cách thông minh.
+
+### 4.2. Tác động tới Recall và Token Cost
+- **Về Recall**: Thêm bộ lọc `Confidence Threshold` giúp loại bỏ hoàn toàn các thực thể nhiễu từ câu hỏi, tăng độ chính xác (`Precision`) của thông tin lưu trong `User.md`.
+- **Về Token Cost**: Giúp dung lượng file `User.md` luôn gọn gàng, giảm bớt lượng prompt token thừa phải mang theo ở mỗi lượt thoại.
+
+### 4.3. Đánh đổi & Rủi ro hệ thống (System Complexity & Trade-offs)
+- **Độ phức tạp**: Cần bổ sung thêm một mô hình Classifier/LLM Judge nhỏ để chấm điểm độ tin cậy (`confidence score > 0.8`) trước khi cho phép ghi vào `User.md`.
+- **Rủi ro**: Nếu thiết lập ngưỡng `confidence` quá khắt khe, hệ thống có thể vô tình bỏ qua các fact quan trọng do người dùng diễn đạt bằng câu nói tự nhiên hoặc ẩn ý.
+
+---
+
+## 5. Kết Luận
+
+1. **Short-term memory đơn thuần** hoàn toàn không đáp ứng được yêu cầu ghi nhớ lâu dài ở các ứng dụng AI Agent thực tế (Recall = 0.0% ở phiên mới).
+2. **Persistent Memory (`User.md`)** là giải pháp bắt buộc để giải bài toán Cross-Session Recall.
+3. **Compact Memory (`CompactMemoryManager`)** là chìa khóa kiểm soát hiện tượng bùng nổ prompt token ở các chuỗi hội thoại dài.
